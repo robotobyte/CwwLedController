@@ -1,12 +1,18 @@
 // ****************************************************************************
 //
-// LED Controller Class
-// --------------------
-// Code by W. Witt; V1.00-beta-01; July 2016
+// LED Controller Class; LED Sequence and Sequence Player Classes
+// --------------------------------------------------------------
+// Code by W. Witt; V1.00-beta-02; September 2016
 //
-// This code implements a class to control an LED (or something similar
-// like a piezo buzzer). It provides an easy interface to get an LED to
-// to turn on or off, fade up or down, blink or smoothly oscillate.
+// This code implements class CwwLedController to control an LED (or
+// something similar like a piezo buzzer). It provides an easy interface
+// to get an LED to turn on or off, fade up or down, blink or smoothly
+// oscillate.
+//
+// Additionally this file contains the code for the CwwLedSequence
+// and CwwLedSequencePlayer classes. These classes, in conjunction with
+// CwwLedController, allow LEDs to controlled with predefined action
+// sequences.
 //
 // ****************************************************************************
 
@@ -24,6 +30,10 @@
 #define LEVEL_VALUE_ABS_MIN  (   0 << LEVEL_FP_BITS   )
 #define LEVEL_VALUE_ABS_MAX  ( 255 << LEVEL_FP_BITS   )
 #define LEVEL_VALUE_ABS_MID  ( 255 << LEVEL_FP_BITS-1 )
+
+// ****************************************************************************
+// Core LED Controller Class
+// ****************************************************************************
 
 // ============================================================================
 // Constructors, Destructor
@@ -50,9 +60,7 @@ CwwLedController::CwwLedController (
   setOscillatePeriod ( oscillatePeriod );
   this->remainingPhases = 0;
 
-  syncFlagPtr       = NULL;
-  syncFlagMeBit     = 0x0;
-  syncFlagCheckMask = 0x0;
+  this->sequencePlayerPtr = NULL;
 
   pinMode ( ledPin, OUTPUT );
   setMode ( LED_OFF, 0, 0, true );
@@ -88,7 +96,23 @@ void CwwLedController::turnOn () {
 
 void CwwLedController::blink ( uint16_t phaseCount ) {
 
+  setMode ( LED_BLINK, phaseCount );
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+void CwwLedController::blinkMax ( uint16_t phaseCount ) {
+
   setMode ( LED_BLINK_MAX, phaseCount );
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+void CwwLedController::blinkLevel ( uint16_t phaseCount ) {
+
+  setMode ( LED_BLINK_LEVEL, phaseCount );
 
 }
 
@@ -113,6 +137,22 @@ void CwwLedController::turnHigh () {
 void CwwLedController::toggle () {
 
   setMode ( LED_TOGGLE );
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+void CwwLedController::toggleMax () {
+
+  setMode ( LED_TOGGLE_MAX );
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+void CwwLedController::toggleLevel () {
+
+  setMode ( LED_TOGGLE_LEVEL );
 
 }
 
@@ -230,6 +270,65 @@ boolean CwwLedController::isSteady () {
 
 // ============================================================================
 
+void CwwLedController::installSequence ( CwwLedSequence * sequencePtr ) {
+
+  if ( sequencePlayerPtr == NULL ) sequencePlayerPtr = new CwwLedSequencePlayer;
+
+  sequencePlayerPtr->attachSequence ( sequencePtr );
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+void CwwLedController::removeSequence () {
+
+  if ( sequencePlayerPtr != NULL ) delete sequencePlayerPtr;
+  sequencePlayerPtr = NULL;
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+void CwwLedController::setSequenceRepeatCount ( uint8_t repeatCount ) {
+
+  if ( sequencePlayerPtr != NULL ) sequencePlayerPtr->setRepeatCount ( repeatCount );
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+void CwwLedController::startSequence () {
+
+  if ( sequencePlayerPtr != NULL ) sequencePlayerPtr->startFirstStep ();
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+void CwwLedController::stopSequence () {
+
+  if ( sequencePlayerPtr != NULL ) sequencePlayerPtr->stop ();
+
+}
+
+// ----------------------------------------------------------------------------
+
+uint8_t CwwLedController::valueOfSequenceRepeatCount () {
+
+  return sequencePlayerPtr != NULL && sequencePlayerPtr->valueOfRepeatCount ();
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+boolean CwwLedController::isPlayingSequence () {
+
+  return sequencePlayerPtr != NULL && sequencePlayerPtr->isRunning ();
+
+}
+
+// ============================================================================
+
 boolean CwwLedController::setLevel ( uint8_t ledLevelNew ) {
 
   uint16_t levelNew;
@@ -271,15 +370,16 @@ uint8_t CwwLedController::currentLevel () {
 // ============================================================================
 
 
-void CwwLedController::setMode ( enumLedMode ledModeNew, uint16_t phaseCount, uint8_t stepAmount ) {
+void CwwLedController::setMode ( cwwEnumLedMode ledModeNew, uint16_t phaseCount, uint8_t stepAmount ) {
 
+  stopSequence ();
   setMode ( ledModeNew, phaseCount, stepAmount, false );
 
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-CwwLedController::enumLedMode CwwLedController::currentMode () {
+cwwEnumLedMode CwwLedController::currentMode () {
 
   return ledModeActive;
 
@@ -368,12 +468,15 @@ boolean CwwLedController::updateIsDue () {
       elapsedTime = currentTime - lastDriveTime;
     }
 
-    return elapsedTime > updateInterval;
+    return elapsedTime >= updateInterval;
 
   }
   else {
-    return false;
+
+    if ( sequencePlayerPtr == NULL ) return false;
+    else                             return sequencePlayerPtr->stepDelayIsDone ();
   }
+
 
 }
 
@@ -381,13 +484,23 @@ boolean CwwLedController::updateIsDue () {
 
 boolean CwwLedController::updateNow () {
 
-  if ( updateIsDue() ) {
-    computeState ( ledModeActive );
-    drivePin ();
-    return true;
+  if ( sequencePlayerPtr != NULL && sequencePlayerPtr->stepDelayIsDone() ) {
+
+    setMode ( sequencePlayerPtr->modeOfStep(), 0, levelStep, false );
+    sequencePlayerPtr->advanceOneStep ();
+
   }
   else {
-    return false;
+
+    if ( updateIsDue() ) {
+      computeState ( ledModeActive );
+      drivePin ();
+      return true;
+    }
+    else {
+      return false;
+    }
+
   }
 
 }
@@ -559,7 +672,7 @@ uint8_t CwwLedController::valueOfLevelStep () {
 
 }
 
-// ----------------------------------------------------------------------------
+// ============================================================================
 
 void CwwLedController::setPwm ( boolean usePwmNew ) {
 
@@ -593,58 +706,17 @@ boolean CwwLedController::isInverted () {
 }
 
 // ============================================================================
-
-CWW_LC_SYNC_WORD CwwLedController::attachSyncHandshake ( CWW_LC_SYNC_WORD * flagPtr, boolean isFirst ) {
-
-  CWW_LC_SYNC_WORD testPos;
-
-  if ( flagPtr == NULL ) {
-
-    syncFlagPtr       = NULL;
-    syncFlagMeBit     = 0x0;
-    syncFlagCheckMask = 0x0;
-
-  }
-  else {
-
-    syncFlagPtr = flagPtr;
-    if ( isFirst ) *syncFlagPtr = 0x0;
-
-    testPos = 0x1;
-    while ( testPos != syncFlagSyncedBit && ( *syncFlagPtr & testPos ) ) testPos <<= 1; 
-    testPos &= ~ syncFlagSyncedBit;
-
-    syncFlagMeBit = testPos;
-    *syncFlagPtr |= syncFlagMeBit;
-
-  }
-
-  return syncFlagMeBit;
-
-}
-
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-void CwwLedController::initSyncHandshake () {
-
-  syncFlagCheckMask = *syncFlagPtr & ~ syncFlagSyncedBit;
-
-  *syncFlagPtr |= syncFlagSyncedBit;
-
-}
-
-// ============================================================================
 // Private Functions
 // ============================================================================
 
 void CwwLedController::setMode (
-  enumLedMode ledModeNew,
-  uint16_t    phaseCount, 
-  uint16_t    stepAmount,
-  boolean     forceSet
+  cwwEnumLedMode ledModeNew,
+  uint16_t       phaseCount,
+  uint16_t       stepAmount,
+  boolean        forceSet
 ) {
 
-  enumLedMode ledModeSpec;
+  cwwEnumLedMode ledModeSpec;
 
   ledModeSpec = adjustMode ( ledModeNew );
   if ( ledModeSpec != ledModeSetting || forceSet ) {
@@ -656,11 +728,11 @@ void CwwLedController::setMode (
 
 // ----------------------------------------------------------------------------
 
-CwwLedController::enumLedMode CwwLedController::adjustMode (
-  enumLedMode ledModeNew
+cwwEnumLedMode CwwLedController::adjustMode (
+  cwwEnumLedMode ledModeNew
 ) {
 
-  enumLedMode ledModeAdjusted;
+  cwwEnumLedMode ledModeAdjusted;
 
   // By default, just pass the incoming mode unless one of the following
   // overrides or adjustments is required...
@@ -670,10 +742,12 @@ CwwLedController::enumLedMode CwwLedController::adjustMode (
   // nearest pure digital modes...
   if ( ! usePwm ) {
     switch ( ledModeNew ) {
+      case LED_HIGH:
       case LED_STEP_UP:
       case LED_FADE_UP:
         ledModeAdjusted = LED_ON;
         break;
+      case LED_LOW:
       case LED_STEP_DOWN:
       case LED_FADE_DOWN:
         ledModeAdjusted = LED_OFF;
@@ -681,6 +755,7 @@ CwwLedController::enumLedMode CwwLedController::adjustMode (
       case LED_FADE_REVERSE:
         ledModeAdjusted = LED_TOGGLE_MAX;
         break;
+      case LED_BLINK_LEVEL:
       case LED_OSCILLATE:
         ledModeAdjusted = LED_BLINK_MAX;
         break;
@@ -730,14 +805,16 @@ CwwLedController::enumLedMode CwwLedController::adjustMode (
 // ----------------------------------------------------------------------------
 
 void CwwLedController::computeState (
-  enumLedMode ledModeNew,
-  uint16_t    phaseCount,
-  uint16_t    stepAmount
+  cwwEnumLedMode ledModeNew,
+  uint16_t       phaseCount,
+  uint16_t       stepAmount
 ) {
 
-  if ( stepAmount == 0 ) stepAmount = levelStep;
+  boolean ledDirIsUpLast;
 
+  if ( stepAmount == 0 ) stepAmount = levelStep;
   ledModeSetting = ledModeNew;
+  ledDirIsUpLast = ledDirIsUp;
 
   switch ( ledModeNew ) {
  
@@ -776,23 +853,24 @@ void CwwLedController::computeState (
       break;
  
     case LED_TOGGLE_LEVEL:
-      ledDirIsUp = ! levelIsNearTop ();
+      ledDirIsUp = ! levelIsNearAbsMax ();
       if ( ledDirIsUp ) { ledLevel = levelMax; ledModeActive = LED_HIGH; }
       else              { ledLevel = levelMin; ledModeActive = LED_LOW;  }
       updateInterval = 0;
       break;
  
     case LED_BLINK_MAX:
-      if ( syncAchieved() ) ledDirIsUp = ! levelIsNearMax ();
+      ledDirIsUp = ! levelIsNearMax ();
       ledLevel = ledDirIsUp ? LEVEL_VALUE_ABS_MAX : LEVEL_VALUE_ABS_MIN;
-      if ( remainingPhases > 0 && syncAchieved() ) {
+      if ( phaseCount > 0 ) remainingPhases = phaseCount;
+      if ( remainingPhases > 0 ) {
         remainingPhases--;
         if ( remainingPhases > 0 ) {
           ledModeActive = LED_BLINK_MAX;
           updateInterval = blinkPeriod / 2;
         }
         else {
-          ledModeActive = ledDirIsUp ? LED_HIGH : LED_LOW;
+          ledModeActive = ledDirIsUp ? LED_ON : LED_OFF;
           updateInterval = 0;
         }
       }
@@ -803,9 +881,10 @@ void CwwLedController::computeState (
       break;
  
     case LED_BLINK_LEVEL:
-      if ( syncAchieved() ) ledDirIsUp = ! levelIsNearTop ();
+      ledDirIsUp = ! levelIsNearAbsMax ();
       ledLevel = ledDirIsUp ? levelMax : levelMin;
-      if ( remainingPhases > 0 && syncAchieved() ) {
+      if ( phaseCount > 0 ) remainingPhases = phaseCount;
+      if ( remainingPhases > 0 ) {
         remainingPhases--;
         if ( remainingPhases > 0 ) {
           ledModeActive = LED_BLINK_LEVEL;
@@ -877,13 +956,13 @@ void CwwLedController::computeState (
       break;
  
     case LED_OSCILLATE:
-      if ( ( ledLevel == levelMin || ledLevel == levelMax ) && syncAchieved() ) {
+      if ( ledLevel == levelMin || ledLevel == levelMax ) {
         ledDirIsUp = ! ledDirIsUp;
       }
       if ( ledDirIsUp ) incrementLevel ();
       else              decrementLevel ();
       if ( phaseCount > 0 ) remainingPhases = phaseCount;
-      if ( remainingPhases > 0 && ( ledLevel == levelMin || ledLevel == levelMax ) && syncAchieved() ) {
+      if ( remainingPhases > 0 && ( ledLevel == levelMin || ledLevel == levelMax ) ) {
         remainingPhases--;
         if ( remainingPhases > 0 ) {
           ledModeActive = LED_OSCILLATE;
@@ -984,7 +1063,7 @@ void CwwLedController::calcLevelMid () {
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-boolean CwwLedController::levelIsNearTop () {
+boolean CwwLedController::levelIsNearMax () {
 
   return ledLevel > LEVEL_VALUE_ABS_MID;
 
@@ -992,38 +1071,9 @@ boolean CwwLedController::levelIsNearTop () {
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-boolean CwwLedController::levelIsNearMax () {
+boolean CwwLedController::levelIsNearAbsMax () {
 
   return ledLevel > levelMid;
-
-}
-
-// ============================================================================
-
-boolean CwwLedController::syncAchieved () {
-
-  if ( syncFlagMeBit ) {
-
-    *syncFlagPtr |= syncFlagMeBit;
-    if ( ( *syncFlagPtr & syncFlagCheckMask ) == syncFlagCheckMask ) {
-      *syncFlagPtr |= syncFlagSyncedBit; 
-    }
-
-    if ( ( *syncFlagPtr & syncFlagSyncedBit ) == syncFlagSyncedBit ) {
-      *syncFlagPtr &= ~ syncFlagMeBit;
-      if ( ( *syncFlagPtr & syncFlagCheckMask ) == 0x0 ) {
-        *syncFlagPtr = 0x0;
-      }
-      return true;
-    }
-    else {
-      return false;
-    }
-
-  }
-  else {
-    return true;
-  }
 
 }
 
@@ -1040,6 +1090,302 @@ void CwwLedController::drivePin ( boolean markDriveTime ) {
   else                         digitalWrite ( ledPin, HIGH        );
 
   if ( markDriveTime ) lastDriveTime = millis ();
+
+}
+
+// ****************************************************************************
+// LED Action Sequence Class (defines action/event sequence)
+// ****************************************************************************
+
+// ============================================================================
+// Constructors, Destructor
+// ============================================================================
+
+CwwLedSequence::CwwLedSequence () {
+
+   startOfSequencePtr = NULL;
+   repeatCount        = 1;
+   attachCount        = 0;
+   
+}
+
+// ----------------------------------------------------------------------------
+
+CwwLedSequence::~CwwLedSequence () {
+
+  discardAll ();
+
+}
+
+// ============================================================================
+// Public Functions
+// ============================================================================
+
+void CwwLedSequence::addStep ( unsigned long timeToStepMs, cwwEnumLedMode modeOfStep ) {
+
+  structSequenceStep * newStepPtr;
+  structSequenceStep * lastStepPtr;
+
+  newStepPtr = new structSequenceStep;
+  newStepPtr->timeToStepMs = timeToStepMs;
+  newStepPtr->modeOfStep   = modeOfStep;
+  newStepPtr->nextStepPtr  = NULL;
+
+  if ( startOfSequencePtr == NULL ) {
+    startOfSequencePtr = newStepPtr;
+  }
+  else {
+    lastStepPtr = startOfSequencePtr;
+    while ( lastStepPtr->nextStepPtr != NULL ) lastStepPtr = lastStepPtr->nextStepPtr;
+    lastStepPtr->nextStepPtr = newStepPtr;
+  }
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+void CwwLedSequence::discardAll ( boolean forceDiscard ) {
+
+  structSequenceStep * delStepPtr;
+  structSequenceStep * nextStepPtr;
+
+  if ( attachCount == 0 || forceDiscard ) {
+
+    delStepPtr = startOfSequencePtr;
+    while ( delStepPtr != NULL ) {
+      nextStepPtr = delStepPtr->nextStepPtr;
+      delete delStepPtr;
+      delStepPtr = nextStepPtr;
+    }
+
+    startOfSequencePtr = NULL;
+    repeatCount = 1;
+
+  }
+
+}
+
+// ----------------------------------------------------------------------------
+
+void CwwLedSequence::setRepeatCount ( uint8_t repeatCount ) {
+
+  this->repeatCount = repeatCount;
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+uint8_t CwwLedSequence::valueOfRepeatCount () {
+
+  return repeatCount;
+
+}
+
+// ----------------------------------------------------------------------------
+
+uint8_t CwwLedSequence::valueOfAttachCount () {
+
+  return attachCount;
+
+}
+
+// ============================================================================
+// Private Functions
+// ============================================================================
+
+void  CwwLedSequence::attachPlayer () {
+
+  attachCount++;
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+void  CwwLedSequence::detachPlayer () {
+
+  if ( attachCount > 0 ) attachCount--;
+
+}
+
+// ****************************************************************************
+// LED Action Sequence Player Class (manages advancing through sequence)
+// ****************************************************************************
+
+// ============================================================================
+// Constructors, Destructor
+// ============================================================================
+
+CwwLedSequencePlayer::CwwLedSequencePlayer () {
+
+  attachedSequencePtr = NULL;
+  currentStepPtr      = NULL;
+
+  iterationsToPlay = 1;
+  currentIteration = 0;
+
+}
+
+// ----------------------------------------------------------------------------
+
+CwwLedSequencePlayer::~CwwLedSequencePlayer () {
+
+  detachSequence ();
+
+}
+
+// ============================================================================
+// Private Functions (for use by CwwLedController friend)
+// ============================================================================
+
+void CwwLedSequencePlayer::attachSequence ( CwwLedSequence * sequencePtr ) {
+
+  if ( attachedSequencePtr != NULL ) detachSequence ();
+
+  attachedSequencePtr = sequencePtr;
+  attachedSequencePtr->attachPlayer ();
+  currentStepPtr = attachedSequencePtr->startOfSequencePtr;
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+void CwwLedSequencePlayer::detachSequence () {
+
+  if ( attachedSequencePtr != NULL ) attachedSequencePtr->detachPlayer ();
+  
+  attachedSequencePtr = NULL;
+
+}
+
+// ----------------------------------------------------------------------------
+
+void CwwLedSequencePlayer::setRepeatCount ( uint8_t repeatCount ) {
+
+  iterationsToPlay = repeatCount;
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+uint8_t CwwLedSequencePlayer::valueOfRepeatCount () {
+
+  return iterationsToPlay;
+
+}
+
+// ----------------------------------------------------------------------------
+
+
+boolean CwwLedSequencePlayer::startFirstStep () {
+
+  if ( attachedSequencePtr->startOfSequencePtr != NULL ) {
+    currentStepPtr = attachedSequencePtr->startOfSequencePtr;
+    currentIteration = 1;
+    delayToStepTimer.start( currentStepPtr->timeToStepMs );
+    return true;
+  }
+  else {
+    return false;
+  }
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+boolean CwwLedSequencePlayer::advanceOneStep () {
+
+  uint16_t effectiveIterations;
+  boolean  stepSuccess;
+
+  if ( attachedSequencePtr->startOfSequencePtr == NULL ) return false;
+
+  if ( currentStepPtr->nextStepPtr != NULL ) {
+    currentStepPtr = currentStepPtr->nextStepPtr;
+    stepSuccess = true;
+  }
+  else {
+    effectiveIterations = iterationsToPlay * attachedSequencePtr->repeatCount;
+    stepSuccess = effectiveIterations == 0 || currentIteration < effectiveIterations;
+    if ( stepSuccess ) {
+      currentStepPtr = attachedSequencePtr->startOfSequencePtr;
+      currentIteration++;
+    }
+    else {
+      stop ();
+    };
+  }
+
+  if ( stepSuccess ) delayToStepTimer.start( currentStepPtr->timeToStepMs );
+
+  return stepSuccess;
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+void CwwLedSequencePlayer::stop () {
+  
+  delayToStepTimer.stop ();
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+boolean CwwLedSequencePlayer::resume () {
+  
+  if ( isPaused() ) {
+    delayToStepTimer.resume ();
+    return true;
+  }
+  else {
+    return true;
+  }
+
+}
+
+// ----------------------------------------------------------------------------
+
+boolean CwwLedSequencePlayer::isRunning () {
+
+  return delayToStepTimer.isRunning ();
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+boolean CwwLedSequencePlayer::isPaused () {
+
+  return delayToStepTimer.isPaused ();
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+boolean CwwLedSequencePlayer::stepDelayIsDone () {
+
+  boolean delayIsDone;
+
+  delayIsDone = delayToStepTimer.hasElapsed() && delayToStepTimer.isRunning();
+
+  if ( delayIsDone && atEndOfSequence() ) delayToStepTimer.stop ();
+
+  return delayIsDone;
+
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+boolean CwwLedSequencePlayer::atEndOfSequence () {
+
+  return currentStepPtr->nextStepPtr == NULL;
+
+}
+
+// ----------------------------------------------------------------------------
+
+cwwEnumLedMode CwwLedSequencePlayer::modeOfStep () {
+
+  return currentStepPtr->modeOfStep;
 
 }
 
